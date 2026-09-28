@@ -1,25 +1,28 @@
-# AWS Cloud Janitor EC2 Lifecycle Manager 
+# AWS Cloud Janitor (EC2 Lifecycle Manager)
 
-Event-driven serverless architecture for automated EC2 instance lifecycle management and cost optimization using AWS Lambda, EventBridge, Amazon SNS, and Telegram.
+Event-driven serverless architecture for automated EC2 instance lifecycle management, tagging compliance, and cost optimization using AWS Lambda, EventBridge, CloudTrail, Amazon SNS, and Telegram.
 
 ## Architecture
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Dev as Developer / Engineer
+    actor Dev as Developer / User
     participant EC2 as Amazon EC2
-    participant EB as EventBridge (Cron / Event)
-    participant Tagger as Lambda (CloudJanitor-Tagger)
-    participant AutoStop as Lambda (CloudJanitor-AutoStop)
+    participant CT as AWS CloudTrail
+    participant EB as EventBridge (Rules)
+    participant Tagger as Lambda (cloud-janitor-ec2-tagger)
+    participant AutoStop as Lambda (cloud-janitor-ec2-autostop)
     participant SNS as Amazon SNS (CloudJanitor-Alerts)
-    participant Forwarder as Lambda (TelegramForwarder)
+    participant Forwarder as Lambda (telegramforwarder)
     actor TG as Telegram Chat
 
-    box 1. Detection & Tagging
+    box 1. Real-Time Detection (Event-Driven)
+        participant Dev
+        participant EC2
+        participant CT
         participant EB
         participant Tagger
-        participant EC2
     end
 
     box 2. Notification Pipeline
@@ -28,27 +31,46 @@ sequenceDiagram
         participant TG
     end
 
-    box 3. Automated Enforcing
+    box 3. Scheduled Enforcement
+        participant EB
         participant AutoStop
+        participant EC2
     end
 
-    %% Flow 1: Detection & Warning
-    EB->>Tagger: Scheduled Trigger (Hourly Cron)
-    Tagger->>EC2: Describe Instances (State = running)
-    EC2-->>Tagger: Return running instances & tags
-    Note over Tagger: Check Grace Period (>30m)<br/>& Missing 'TTL' tag
-    Tagger->>EC2: CreateTags (Janitor_Status = Missing_TTL_Warning)
-    Tagger->>SNS: Publish Warning Message (Subject & Instances)
-    SNS->>Forwarder: Trigger via SNS Subscription
-    Forwarder->>TG: Send Telegram Alert (HTML Format)
+    %% Flow 1: Real-time Event Detection on Instance Launch
+    Dev->>EC2: Launch EC2 Instance (RunInstances)
+    EC2->>CT: Log API Event (RunInstances)
+    CT->>EB: Stream Event Log
+    EB->>Tagger: Trigger on Event Pattern (RunInstances)
+    
+    Tagger->>EC2: DescribeInstances (Fetch Tags)
+    EC2-->>Tagger: Instance Metadata & Tags
+    
+    alt Missing 'TTL' Tag
+        Tagger->>EC2: CreateTags (Janitor_Status = Missing_TTL_Warning)
+        Tagger->>SNS: Publish Warning Message
+        SNS->>Forwarder: Trigger via SNS Subscription
+        Forwarder->>TG: Send Telegram Alert (Markdown / HTML)
+    else Has 'TTL' Tag
+        Note over Tagger: Log TTL info & skip tagging
+    end
 
-    %% Flow 2: Automated Cleanup
-    EB->>AutoStop: Scheduled Trigger (Cleanup Cron)
-    AutoStop->>EC2: Describe Instances (Running & Warnings/Expired)
-    EC2-->>AutoStop: Return non-compliant instances
-    Note over AutoStop: Parse TTL & verify Grace Period
-    AutoStop->>EC2: Stop Instances (Batch / Individual Fallback)
-    AutoStop->>EC2: CreateTags (Janitor_Status = Stopped_No_TTL / Stopped_TTL_Expired)
-    AutoStop->>SNS: Publish Execution Alert
-    SNS->>Forwarder: Trigger via SNS Subscription
-    Forwarder->>TG: Send Telegram Alert (HTML Format)
+    %% Flow 2: Scheduled Enforcement & Stop
+    Note over EB: Periodic Schedule (e.g., Every 30m / Hourly)
+    EB->>AutoStop: Scheduled Cron Trigger
+    AutoStop->>EC2: DescribeInstances (Filter: running)
+    EC2-->>AutoStop: List of Running Instances
+
+    loop Evaluate Active Instances
+        Note over AutoStop: Check 'Janitor_Status' == Missing_TTL_Warning<br/>& Verify Grace Period<br/>OR Parse 'TTL' & Compare with Current Time (UTC)
+    end
+
+    alt Non-Compliant / Expired Instances Found
+        AutoStop->>EC2: StopInstances (Batch Execution)
+        AutoStop->>EC2: CreateTags (Janitor_Status = Stopped_No_TTL / Stopped_TTL_Expired)
+        AutoStop->>SNS: Publish Alert Message
+        SNS->>Forwarder: Trigger via SNS Subscription
+        Forwarder->>TG: Send Telegram Notification
+    else Cloud Clean
+        Note over AutoStop: No action required
+    end
