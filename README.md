@@ -1,3 +1,4 @@
+```mermaid
 sequenceDiagram
     autonumber
     actor Dev as Developer / User
@@ -67,3 +68,4 @@ sequenceDiagram
     else Cloud Clean
         Note over AutoStop: No action required
     end
+```
