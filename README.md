@@ -1,16 +1,10 @@
-# AWS Cloud Janitor (EC2 Lifecycle Manager)
-
-Event-driven serverless architecture for automated EC2 instance lifecycle management, tagging compliance, and cost optimization using AWS Lambda, EventBridge, CloudTrail, Amazon SNS, and Telegram.
-
-## Architecture
-
-```mermaid
 sequenceDiagram
     autonumber
     actor Dev as Developer / User
     participant EC2 as Amazon EC2
     participant CT as AWS CloudTrail
-    participant EB as EventBridge (Rules)
+    participant EB_Event as EventBridge (Event Rule)
+    participant EB_Cron as EventBridge (Schedule Rule)
     participant Tagger as Lambda (cloud-janitor-ec2-tagger)
     participant AutoStop as Lambda (cloud-janitor-ec2-autostop)
     participant SNS as Amazon SNS (CloudJanitor-Alerts)
@@ -21,7 +15,7 @@ sequenceDiagram
         participant Dev
         participant EC2
         participant CT
-        participant EB
+        participant EB_Event
         participant Tagger
     end
 
@@ -32,16 +26,15 @@ sequenceDiagram
     end
 
     box 3. Scheduled Enforcement
-        participant EB
+        participant EB_Cron
         participant AutoStop
-        participant EC2
     end
 
     %% Flow 1: Real-time Event Detection on Instance Launch
     Dev->>EC2: Launch EC2 Instance (RunInstances)
     EC2->>CT: Log API Event (RunInstances)
-    CT->>EB: Stream Event Log
-    EB->>Tagger: Trigger on Event Pattern (RunInstances)
+    CT->>EB_Event: Stream Event Log
+    EB_Event->>Tagger: Trigger on Event Pattern (RunInstances)
     
     Tagger->>EC2: DescribeInstances (Fetch Tags)
     EC2-->>Tagger: Instance Metadata & Tags
@@ -56,8 +49,8 @@ sequenceDiagram
     end
 
     %% Flow 2: Scheduled Enforcement & Stop
-    Note over EB: Periodic Schedule (e.g., Every 30m / Hourly)
-    EB->>AutoStop: Scheduled Cron Trigger
+    Note over EB_Cron: Periodic Schedule (e.g., Every 30m / Hourly)
+    EB_Cron->>AutoStop: Scheduled Cron Trigger
     AutoStop->>EC2: DescribeInstances (Filter: running)
     EC2-->>AutoStop: List of Running Instances
 
